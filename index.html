@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>节奏能手 · 微信小游戏预览</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    height: 100%;
+    background: #07081a;
+    font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    overflow: hidden;
+  }
+  body { display: flex; align-items: center; justify-content: center; }
+  #frame {
+    position: relative;
+    width: min(420px, 100vw);
+    height: min(92vh, 880px);
+    background: #0d0e22;
+    border-radius: 26px;
+    overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.05) inset;
+  }
+  #game { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  /* 分享弹窗 */
+  #shareModal {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.78);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; padding: 20px; z-index: 10;
+  }
+  #shareModal.hidden { display: none; }
+  #shareModal img {
+    width: min(78%, 320px); border-radius: 16px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  }
+  #shareText { color: #fff; font-size: 14px; opacity: 0.85; text-align: center; }
+  .row { display: flex; gap: 12px; }
+  .btn {
+    border: none; border-radius: 24px; padding: 12px 22px;
+    font-size: 15px; font-weight: 700; cursor: pointer; color: #fff;
+  }
+  .btn.primary { background: linear-gradient(180deg,#7c8cff,#4f5cff); }
+  .btn.ghost { background: rgba(255,255,255,0.14); }
+  #hint { color: rgba(255,255,255,0.5); font-size: 12px; }
+</style>
+</head>
+<body>
+  <div id="frame">
+    <canvas id="game"></canvas>
+    <div id="shareModal" class="hidden">
+      <img id="shareImg" alt="成绩分享卡" />
+      <div id="shareText"></div>
+      <div class="row">
+        <button class="btn primary" id="shareBtn">分享给好友</button>
+        <a class="btn ghost" id="shareDl">保存图片</a>
+      </div>
+      <div id="hint">提示：手机端可长按图片保存后分享</div>
+      <button class="btn ghost" id="closeBtn">关闭</button>
+    </div>
+  </div>
+
+  <script src="src/core.js"></script>
+  <script src="src/audio.js"></script>
+  <script>
+  (function () {
+    var canvas = document.getElementById('game');
+    var ctx = canvas.getContext('2d');
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var logicalW = 0, logicalH = 0;
+    var audio = createAudio();
+
+    function resize() {
+      var rect = canvas.getBoundingClientRect();
+      logicalW = rect.width; logicalH = rect.height;
+      canvas.width = Math.round(logicalW * dpr);
+      canvas.height = Math.round(logicalH * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    var platform = {
+      ctx: ctx,
+      getSize: function () { return { w: logicalW, h: logicalH }; },
+      raf: function (cb) { return requestAnimationFrame(cb); },
+      createCardCanvas: function (w, h) {
+        var c = document.createElement('canvas'); c.width = w; c.height = h; return c;
+      },
+      haptic: function (t) {
+        if (navigator.vibrate) navigator.vibrate(t === 'heavy' ? 60 : (t === 'medium' ? 30 : 15));
+      },
+      sound: audio.sound,
+      share: browserShare
+    };
+
+    function browserShare(payload) {
+      var url = payload.cardCanvas.toDataURL('image/png');
+      document.getElementById('shareImg').src = url;
+      document.getElementById('shareText').textContent = payload.title;
+      var dl = document.getElementById('shareDl');
+      dl.href = url; dl.download = '节奏能手-' + payload.score + '分.png';
+      document.getElementById('shareModal').classList.remove('hidden');
+
+      document.getElementById('shareBtn').onclick = async function () {
+        try {
+          var blob = await (await fetch(url)).blob();
+          var file = new File([blob], 'music-master.png', { type: 'image/png' });
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: payload.title, text: payload.title });
+          } else if (navigator.share) {
+            await navigator.share({ title: payload.title, text: payload.title });
+          } else {
+            alert('当前浏览器不支持系统分享，请使用「保存图片」后手动分享~');
+          }
+        } catch (e) { /* 用户取消分享 */ }
+      };
+    }
+
+    document.getElementById('closeBtn').onclick = function () {
+      document.getElementById('shareModal').classList.add('hidden');
+    };
+
+    var game = createMusicGame(platform);
+
+    function toLogical(e) {
+      var rect = canvas.getBoundingClientRect();
+      return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    }
+    canvas.addEventListener('pointerdown', function (e) {
+      audio.resume();
+      var p = toLogical(e); game.pointer(p.x, p.y);
+    });
+
+    var keymap = { ArrowLeft: 'left', ArrowUp: 'up', ArrowDown: 'down', ArrowRight: 'right' };
+    window.addEventListener('keydown', function (e) {
+      audio.resume();
+      if (keymap[e.key]) { game.press(keymap[e.key]); e.preventDefault(); }
+      else if (e.key === ' ' || e.key === 'Enter') { game.primary(); e.preventDefault(); }
+    });
+
+    window.addEventListener('resize', resize);
+    resize();
+    game.start();
+  })();
+  </script>
+</body>
+</html>
