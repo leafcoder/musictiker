@@ -3,6 +3,7 @@
  * 浏览器与微信小游戏通用：自动检测 AudioContext / wx.createWebAudioContext。
  *
  * 音效：    sound('start' | 'hit' | 'perfect' | 'fail' | 'tick' | 'go')
+ *            风格：空灵清脆的钟铃音（正弦 + 八度 + 非谐泛音，快起音、闪烁长尾）。
  * 背景音乐：bgmStart() / bgmStop()  —— 原创合成循环，规避版权风险。
  *
  * 版权说明：本模块所有声音均由 OscillatorNode / 噪声缓冲区实时合成，
@@ -31,53 +32,68 @@
       return ctx;
     }
 
-    // 通用包络音
-    function tone(freq, start, dur, type, vol, attack) {
+    // 空灵清脆的钟铃音：正弦基频 + 八度 + 非谐泛音（钟铃质感），快起音、闪烁长尾
+    function bell(freq, start, dur, vol, partials) {
       var c = ensure();
       if (!c) return;
       var t0 = c.currentTime + start;
-      var osc = c.createOscillator();
-      var g = c.createGain();
-      osc.type = type || 'sine';
-      osc.frequency.setValueAtTime(freq, t0);
-      g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(vol || 0.2, t0 + (attack || 0.012));
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-      osc.connect(g);
-      g.connect(c.destination);
-      osc.start(t0);
-      osc.stop(t0 + dur + 0.03);
+      var parts = partials || [
+        { m: 1, v: 1.0 },
+        { m: 2, v: 0.5 },     // 八度，增加“清脆”
+        { m: 2.76, v: 0.22 }  // 钟铃非谐分量，制造“空灵通透”
+      ];
+      for (var i = 0; i < parts.length; i++) {
+        var osc = c.createOscillator();
+        var g = c.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq * parts[i].m, t0);
+        var v = vol * parts[i].v;
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(v, t0 + 0.006); // 极快起音 -> 清脆
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur * (i === 0 ? 1 : 0.65));
+        osc.connect(g);
+        g.connect(c.destination);
+        osc.start(t0);
+        osc.stop(t0 + dur + 0.05);
+      }
     }
 
     function sound(type) {
       var c = ensure();
       if (!c) return;
       if (type === 'start') {
-        // 上行三音，明亮开局
-        tone(523.25, 0.00, 0.12, 'triangle', 0.25);
-        tone(659.25, 0.10, 0.12, 'triangle', 0.25);
-        tone(783.99, 0.20, 0.20, 'triangle', 0.28);
+        // 上行钟铃琶音，明亮空灵的开局
+        bell(523.25, 0.00, 0.5, 0.18);
+        bell(659.25, 0.10, 0.5, 0.18);
+        bell(783.99, 0.20, 0.7, 0.20);
+        bell(1046.5, 0.30, 0.95, 0.16);
       } else if (type === 'tick') {
-        // 倒计时滴答：清脆木鱼感
-        tone(987.77, 0.00, 0.08, 'triangle', 0.20, 0.004);
-        tone(1318.5, 0.005, 0.05, 'sine', 0.08, 0.004);
+        // 倒计时滴答：清亮小铃
+        bell(1318.5, 0.00, 0.22, 0.12);
       } else if (type === 'go') {
-        // 开始信号：上扬两音
-        tone(659.25, 0.00, 0.12, 'square', 0.20, 0.006);
-        tone(987.77, 0.10, 0.22, 'square', 0.26, 0.006);
+        // 开始信号：上扬两声清铃
+        bell(659.25, 0.00, 0.4, 0.16);
+        bell(987.77, 0.08, 0.6, 0.20);
       } else if (type === 'hit') {
-        // 清脆短促的命中音
-        tone(880.00, 0.00, 0.09, 'square', 0.16);
-        tone(1318.5, 0.01, 0.07, 'sine', 0.10);
+        // 命中：清脆通透的铃音
+        bell(880.0, 0.00, 0.35, 0.16);
       } else if (type === 'perfect') {
-        // 完美命中：更高更亮
-        tone(1046.5, 0.00, 0.10, 'square', 0.16);
-        tone(1568.0, 0.02, 0.09, 'sine', 0.12);
+        // 完美命中：更高更亮，带闪烁泛音
+        bell(1046.5, 0.00, 0.45, 0.16);
+        bell(1568.0, 0.02, 0.5, 0.12);
       } else if (type === 'fail') {
-        // 下行低频，失败感
-        tone(196.00, 0.00, 0.50, 'sawtooth', 0.22);
-        tone(146.83, 0.05, 0.55, 'sawtooth', 0.20);
-        tone(110.00, 0.12, 0.62, 'sawtooth', 0.18);
+        // 柔和下行的“叹息”音（空灵不刺耳）：正弦下滑 + 柔尾 + 轻微高泛音
+        var t0 = c.currentTime;
+        var o = c.createOscillator(); var g = c.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(523.25, t0);
+        o.frequency.exponentialRampToValueAtTime(261.63, t0 + 0.4);
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(0.14, t0 + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.6);
+        o.connect(g); g.connect(c.destination);
+        o.start(t0); o.stop(t0 + 0.65);
+        bell(1046.5, 0.0, 0.5, 0.05);
       }
     }
 

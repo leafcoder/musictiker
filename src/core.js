@@ -5,7 +5,8 @@
  *
  * 玩法：从顶部掉落 4 个方向（上/下/左/右）的图标，
  *       图标进入底部横向触发区时，按下对应方向的按键即命中；
- *       按错方向 或 图标掉落出触发区 = 游戏结束。命中加分，分数越高成就越高。
+ *       按错方向 或 图标掉落出触发区 扣 1 点生命（共 3 点），生命耗尽才游戏结束。
+ *       命中加分，分数越高成就越高；游戏结束可复活一次继续。
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -102,6 +103,30 @@
     ctx.restore();
   }
 
+  // 矢量爱心（不使用 Emoji）：filled=true 实心发光，否则暗描边
+  function drawHeart(ctx, x, y, s, filled) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.beginPath();
+    ctx.moveTo(0, s * 0.42);
+    ctx.bezierCurveTo(-s * 0.52, -s * 0.08, -s * 0.52, -s * 0.56, 0, -s * 0.18);
+    ctx.bezierCurveTo(s * 0.52, -s * 0.56, s * 0.52, -s * 0.08, 0, s * 0.42);
+    ctx.closePath();
+    if (filled) {
+      ctx.fillStyle = '#FF5C7A';
+      ctx.shadowColor = 'rgba(255,92,122,0.7)';
+      ctx.shadowBlur = 8;
+      ctx.fill();
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.10)';
+      ctx.fill();
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   function getAchievement(score) {
     for (var i = 0; i < ACHIEVEMENTS.length; i++) {
       if (score >= ACHIEVEMENTS[i].min) return ACHIEVEMENTS[i];
@@ -150,6 +175,8 @@
     var soundFn = opts.sound || function () {};
     var bgmStartFn = opts.bgmStart || function () {};
     var bgmStopFn = opts.bgmStop || function () {};
+    var getBestFn = opts.getBest || function () { return 0; };
+    var setBestFn = opts.setBest || function () {};
     var createCardCanvas = opts.createCardCanvas || function () { return null; };
 
     var state = 'menu'; // menu | countdown | playing | over
@@ -162,6 +189,8 @@
     var lastSpawnLane = -1; // 记录上一次掉落的轨道，避免方向机械重复
     var overReason = '', endScore = 0, overAch = null, lastCard = null;
     var clock = 0, shake = 0, shakeMag = 0;
+    var maxLives = 3, lives = maxLives, maxRevives = 1, revivesUsed = 0;
+    var bestScore = (getBestFn() || 0), isNewBest = false;
 
     function nowSec() {
       var t = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
@@ -195,6 +224,7 @@
       score = 0; combo = 0; maxCombo = 0; notes = []; floats = []; pops = [];
       elapsed = 0; spawnTimer = 0.6; overReason = ''; overAch = null; lastCard = null;
       shake = 0; lastSpawnLane = -1;
+      lives = maxLives; revivesUsed = 0; isNewBest = false;
     }
 
     function startCountdown() { resetGame(); state = 'countdown'; countdown = 3.0; countInt = 0; soundFn('start'); bgmStartFn(); }
@@ -250,8 +280,21 @@
         hapticFn(perfect ? 'medium' : 'light');
         soundFn(perfect ? 'perfect' : 'hit');
       } else {
-        overReason = 'wrong'; endGame();
+        loseLife('wrong', lane);
       }
+    }
+
+    // 扣减生命：按错方向 / 漏接 不再立即结束，而是扣 1 点生命；生命耗尽才 game over
+    function loseLife(reason, lane) {
+      if (state !== 'playing') return;
+      lives--;
+      overReason = reason;
+      combo = 0;
+      hapticFn('heavy');
+      soundFn('fail');
+      shake = 0.35; shakeMag = 10;
+      floats.push({ x: layout.laneX(lane), y: layout.hitZoneCenterY, text: 'MISS', life: 0.7, color: '#FF5C7A', big: false });
+      if (lives <= 0) endGame();
     }
 
     function pointer(x, y) {
@@ -264,7 +307,8 @@
           if (lane >= 0 && lane < 4) press(DIRS[lane].key);
         }
       } else if (state === 'over') {
-        if (hit(buttons.restart, x, y)) startCountdown();
+        if (hit(buttons.revive, x, y)) doRevive();
+        else if (hit(buttons.restart, x, y)) startCountdown();
         else if (hit(buttons.share, x, y)) doShare();
       }
     }
@@ -273,9 +317,26 @@
       if (state === 'menu' || state === 'over') startCountdown();
     }
 
+    // 复活：清场并恢复满血，继续当前局（保留分数），每局限一次
+    function doRevive() {
+      if (state !== 'over' || revivesUsed >= maxRevives) return;
+      revivesUsed++;
+      lives = maxLives;
+      combo = 0;
+      notes = []; floats = []; pops = [];
+      overReason = '';
+      spawnTimer = 0.6;
+      state = 'playing';
+      lastTime = nowSec();
+      soundFn('go');
+      bgmStartFn();
+    }
+
     function endGame() {
       state = 'over'; endScore = score; combo = 0;
       overAch = getAchievement(score);
+      isNewBest = score > bestScore;
+      if (isNewBest) { bestScore = score; setBestFn(bestScore); }
       hapticFn('heavy');
       soundFn('fail');
       bgmStopFn();
@@ -326,7 +387,9 @@
         for (var j = 0; j < notes.length; j++) {
           var n = notes[j];
           if (!n.hit && n.y - layout.noteSize * 0.5 > layout.hitZoneBottom + layout.noteSize * 0.25) {
-            overReason = 'miss'; endGame(); return;
+            n.hit = true; // 标记移除，避免同一漏接重复扣血
+            loseLife('miss', n.lane);
+            if (state === 'over') { stepFloats(dt); return; }
           }
         }
         notes = notes.filter(function (n) { return !n.hit && n.y < layout.h + 60; });
@@ -532,6 +595,10 @@
       text(ctx, '得分', w / 2, L.topBarH * 0.3, '600 12px system-ui, sans-serif', 'rgba(255,255,255,0.55)');
       gradText(ctx, String(score), w / 2, L.topBarH * 0.66, 'bold 32px system-ui, sans-serif', titleGrad(ctx, L.topBarH * 0.66, 30), 'center');
       text(ctx, '节奏能手', 16, L.topBarH * 0.5, '600 13px system-ui, sans-serif', 'rgba(255,255,255,0.45)', 'left');
+      // 生命值（矢量爱心）
+      for (var hl = 0; hl < maxLives; hl++) {
+        drawHeart(ctx, 18 + hl * 19, L.topBarH * 0.82, 13, hl < lives);
+      }
       if (combo > 1) {
         var cw = 78, cx = w - 16 - cw, cy = L.topBarH * 0.5 - 13;
         glassPanel(ctx, cx, cy, cw, 26, 13, 0.1, 0.3);
@@ -581,6 +648,10 @@
       for (var i = 0; i < lines.length; i++) {
         text(ctx, lines[i], w / 2, cyc + 24 + i * 26, '500 14px system-ui, sans-serif', 'rgba(255,255,255,0.62)');
       }
+      // 历史最高分
+      if (bestScore > 0) {
+        text(ctx, '历史最高 ' + bestScore + ' 分', w / 2, h * 0.66, '600 15px system-ui, sans-serif', 'rgba(255,226,122,0.92)');
+      }
       // 开始按钮（渐变 + 微光）
       var bw = w * 0.56, bh = 58, bx = (w - bw) / 2, by = h * 0.74;
       buttons.start = { x: bx, y: by, w: bw, h: bh };
@@ -604,11 +675,10 @@
     }
 
     function drawOver(w, h) {
-      var L = layout;
       ctx.save();
       ctx.fillStyle = 'rgba(3,4,12,0.72)';
       ctx.fillRect(0, 0, w, h);
-      var cw = w * 0.84, ch = h * 0.62, cx = (w - cw) / 2, cy = (h - ch) / 2;
+      var cw = w * 0.84, ch = h * 0.64, cx = (w - cw) / 2, cy = (h - ch) / 2;
       ctx.save();
       ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 40; ctx.shadowOffsetY = 16;
       roundRect(ctx, cx, cy, cw, ch, 24);
@@ -619,36 +689,74 @@
       ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(124,140,255,0.45)';
       roundRect(ctx, cx, cy, cw, ch, 24); ctx.stroke();
 
-      text(ctx, '游戏结束', w / 2, cy + ch * 0.1, 'bold 20px system-ui, sans-serif', 'rgba(255,255,255,0.8)');
-      text(ctx, '本局得分', w / 2, cy + ch * 0.24, '600 13px system-ui, sans-serif', 'rgba(255,255,255,0.55)');
-      gradText(ctx, String(endScore), w / 2, cy + ch * 0.36, 'bold 60px system-ui, sans-serif', titleGrad(ctx, cy + ch * 0.36, 56));
+      text(ctx, '游戏结束', w / 2, cy + ch * 0.09, 'bold 20px system-ui, sans-serif', 'rgba(255,255,255,0.8)');
+      text(ctx, '本局得分', w / 2, cy + ch * 0.21, '600 13px system-ui, sans-serif', 'rgba(255,255,255,0.55)');
+      gradText(ctx, String(endScore), w / 2, cy + ch * 0.32, 'bold 58px system-ui, sans-serif', titleGrad(ctx, cy + ch * 0.32, 54));
       if (maxCombo > 1) {
-        text(ctx, '最高连击 ×' + maxCombo, w / 2, cy + ch * 0.45, '600 13px system-ui, sans-serif', 'rgba(255,255,255,0.6)');
+        text(ctx, '最高连击 ×' + maxCombo, w / 2, cy + ch * 0.41, '600 13px system-ui, sans-serif', 'rgba(255,255,255,0.6)');
+      }
+      // 最高分 / 新纪录
+      if (isNewBest) {
+        gradText(ctx, '★ 新纪录 ★', w / 2, cy + ch * 0.48, 'bold 16px system-ui, sans-serif', titleGrad(ctx, cy + ch * 0.48, 16));
+      } else if (bestScore > 0) {
+        text(ctx, '历史最高 ' + bestScore + ' 分', w / 2, cy + ch * 0.48, '600 14px system-ui, sans-serif', 'rgba(255,226,122,0.9)');
       }
 
       var ach = overAch || getAchievement(endScore);
       ctx.save();
       ctx.shadowColor = 'rgba(255,226,122,0.8)'; ctx.shadowBlur = 18;
-      drawNote(ctx, w / 2, cy + ch * 0.58, 32, '#FFE27A', 1);
+      drawNote(ctx, w / 2, cy + ch * 0.56, 30, '#FFE27A', 1);
       ctx.restore();
-      text(ctx, '获得称号', w / 2, cy + ch * 0.67, '600 13px system-ui, sans-serif', 'rgba(255,255,255,0.55)');
-      gradText(ctx, '「' + ach.title + '」', w / 2, cy + ch * 0.74, 'bold 26px system-ui, sans-serif', titleGrad(ctx, cy + ch * 0.74, 24));
-      text(ctx, ach.desc, w / 2, cy + ch * 0.81, '500 13px system-ui, sans-serif', 'rgba(255,255,255,0.62)');
+      text(ctx, '获得称号', w / 2, cy + ch * 0.63, '600 13px system-ui, sans-serif', 'rgba(255,255,255,0.55)');
+      gradText(ctx, '「' + ach.title + '」', w / 2, cy + ch * 0.69, 'bold 24px system-ui, sans-serif', titleGrad(ctx, cy + ch * 0.69, 22));
+      text(ctx, ach.desc, w / 2, cy + ch * 0.75, '500 13px system-ui, sans-serif', 'rgba(255,255,255,0.62)');
 
-      var bw = cw * 0.42, bh = 50, gap = cw * 0.08, totalW = bw * 2 + gap;
-      var startX = (w - totalW) / 2, by = cy + ch - bh - 20;
-      buttons.restart = { x: startX, y: by, w: bw, h: bh };
-      buttons.share = { x: startX + bw + gap, y: by, w: bw, h: bh };
-      glassPanel(ctx, startX, by, bw, bh, bh / 2, 0.1, 0.3);
-      text(ctx, '再玩一次', startX + bw / 2, by + bh / 2, 'bold 17px system-ui, sans-serif', '#ffffff');
-      ctx.save();
-      ctx.shadowColor = 'rgba(108,92,231,0.7)'; ctx.shadowBlur = 18;
-      roundRect(ctx, startX + bw + gap, by, bw, bh, bh / 2);
-      var g2 = ctx.createLinearGradient(startX + bw + gap, by, startX + bw + gap, by + bh);
-      g2.addColorStop(0, '#8A7BFF'); g2.addColorStop(1, '#5B6BFF');
-      ctx.fillStyle = g2; ctx.fill();
-      ctx.restore();
-      text(ctx, '分享成绩', startX + bw + gap + bw / 2, by + bh / 2, 'bold 17px system-ui, sans-serif', '#ffffff');
+      var bh = 50;
+      var by = cy + ch - bh - 16;
+      var reviveAvailable = revivesUsed < maxRevives;
+      if (reviveAvailable) {
+        // 上方：再玩一次 + 分享成绩（小号）
+        var sbh = 42, sbw = cw * 0.42, sgap = cw * 0.08, stotal = sbw * 2 + sgap;
+        var sx = (w - stotal) / 2, sby = by - sbh - 10;
+        buttons.restart = { x: sx, y: sby, w: sbw, h: sbh };
+        buttons.share = { x: sx + sbw + sgap, y: sby, w: sbw, h: sbh };
+        glassPanel(ctx, sx, sby, sbw, sbh, sbh / 2, 0.1, 0.3);
+        text(ctx, '再玩一次', sx + sbw / 2, sby + sbh / 2, 'bold 15px system-ui, sans-serif', '#ffffff');
+        ctx.save();
+        ctx.shadowColor = 'rgba(108,92,231,0.6)'; ctx.shadowBlur = 14;
+        roundRect(ctx, sx + sbw + sgap, sby, sbw, sbh, sbh / 2);
+        var gs = ctx.createLinearGradient(sx + sbw + sgap, sby, sx + sbw + sgap, sby + sbh);
+        gs.addColorStop(0, '#8A7BFF'); gs.addColorStop(1, '#5B6BFF');
+        ctx.fillStyle = gs; ctx.fill();
+        ctx.restore();
+        text(ctx, '分享成绩', sx + sbw + sgap + sbw / 2, sby + sbh / 2, 'bold 15px system-ui, sans-serif', '#ffffff');
+        // 底部：复活继续（醒目金色）
+        var rbw = cw * 0.8, rbx = (w - rbw) / 2;
+        buttons.revive = { x: rbx, y: by, w: rbw, h: bh };
+        ctx.save();
+        ctx.shadowColor = 'rgba(255,196,75,0.7)'; ctx.shadowBlur = 22;
+        roundRect(ctx, rbx, by, rbw, bh, bh / 2);
+        var gr = ctx.createLinearGradient(rbx, by, rbx, by + bh);
+        gr.addColorStop(0, '#FFD166'); gr.addColorStop(1, '#FF9A3C');
+        ctx.fillStyle = gr; ctx.fill();
+        ctx.restore();
+        text(ctx, '复活继续', rbx + rbw / 2, by + bh / 2, 'bold 18px system-ui, sans-serif', '#3a2400');
+      } else {
+        var bw = cw * 0.42, gap = cw * 0.08, totalW = bw * 2 + gap;
+        var startX = (w - totalW) / 2;
+        buttons.restart = { x: startX, y: by, w: bw, h: bh };
+        buttons.share = { x: startX + bw + gap, y: by, w: bw, h: bh };
+        glassPanel(ctx, startX, by, bw, bh, bh / 2, 0.1, 0.3);
+        text(ctx, '再玩一次', startX + bw / 2, by + bh / 2, 'bold 17px system-ui, sans-serif', '#ffffff');
+        ctx.save();
+        ctx.shadowColor = 'rgba(108,92,231,0.7)'; ctx.shadowBlur = 18;
+        roundRect(ctx, startX + bw + gap, by, bw, bh, bh / 2);
+        var g2 = ctx.createLinearGradient(startX + bw + gap, by, startX + bw + gap, by + bh);
+        g2.addColorStop(0, '#8A7BFF'); g2.addColorStop(1, '#5B6BFF');
+        ctx.fillStyle = g2; ctx.fill();
+        ctx.restore();
+        text(ctx, '分享成绩', startX + bw + gap + bw / 2, by + bh / 2, 'bold 17px system-ui, sans-serif', '#ffffff');
+      }
       ctx.restore();
     }
 

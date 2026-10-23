@@ -37,6 +37,8 @@ const platform = {
   sound: audio.sound,
   bgmStart: () => audio.bgmStart(),
   bgmStop: () => audio.bgmStop(),
+  getBest: () => { try { return wx.getStorageSync('rmns_best') || 0; } catch (e) { return 0; } },
+  setBest: (v) => { try { wx.setStorageSync('rmns_best', v); } catch (e) {} },
   share: (payload) => {
     const card = payload.cardCanvas;
     const fire = (imageUrl) => {
