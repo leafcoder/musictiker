@@ -2,6 +2,7 @@
 // 在微信开发者工具中导入本目录（music-master）即可运行。
 const createMusicGame = require('./src/core.js');
 const createAudio = require('./src/audio.js');
+const audio = createAudio();
 
 const sys = wx.getSystemInfoSync();
 const dpr = sys.pixelRatio || 1;
@@ -33,7 +34,9 @@ const platform = {
       wx.vibrateShort({ type });
     } catch (e) { try { wx.vibrateShort(); } catch (_) {} }
   },
-  sound: createAudio().sound,
+  sound: audio.sound,
+  bgmStart: () => audio.bgmStart(),
+  bgmStop: () => audio.bgmStop(),
   share: (payload) => {
     const card = payload.cardCanvas;
     const fire = (imageUrl) => {
@@ -67,6 +70,7 @@ function touchXY(t) {
 
 wx.onTouchStart(function (e) {
   if (!e || !e.touches || !e.touches.length) return;
+  audio.resume(); // 微信端在用户手势内恢复音频上下文（满足自动播放限制）
   var p = touchXY(e.touches[0]);
   game.pointer(p.x, p.y);
 });

@@ -91,6 +91,8 @@
         if (navigator.vibrate) navigator.vibrate(t === 'heavy' ? 60 : (t === 'medium' ? 30 : 15));
       },
       sound: audio.sound,
+      bgmStart: function () { audio.bgmStart(); },
+      bgmStop: function () { audio.bgmStop(); },
       share: browserShare
     };
 

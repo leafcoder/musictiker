@@ -23,11 +23,16 @@
 
   // 成就（按分数段划分，分数从高到低）
   var ACHIEVEMENTS = [
-    { min: 300, title: '传奇指挥', desc: '全场为你鼓掌，节奏之神！' },
-    { min: 180, title: '节奏大师', desc: '名副其实的节奏掌控者' },
-    { min: 90,  title: '旋律能手', desc: '你的手指跟上了音乐' },
-    { min: 30,  title: '节奏新星', desc: '你找到了节拍的感觉' },
-    { min: 0,   title: '初学琴童', desc: '刚拿起乐器的小萌新' }
+    { min: 1000, title: '节奏之巅', desc: '已达人类反应极限，封神！' },
+    { min: 600,  title: '传奇指挥', desc: '全场为你鼓掌，节奏之神！' },
+    { min: 400,  title: '殿堂乐师', desc: '你的演奏征服了整个舞台' },
+    { min: 260,  title: '节奏大师', desc: '名副其实的节奏掌控者' },
+    { min: 160,  title: '旋律能手', desc: '你的手指跟上了音乐' },
+    { min: 90,   title: '律动先锋', desc: '节拍在你的指尖跳跃' },
+    { min: 50,   title: '节奏新星', desc: '你找到了节拍的感觉' },
+    { min: 25,   title: '节拍学徒', desc: '开始摸到节奏的门道了' },
+    { min: 10,   title: '初学琴童', desc: '刚拿起乐器的小萌新' },
+    { min: 0,    title: '音乐萌新', desc: '一切才刚刚开始' }
   ];
 
   // 背景漂浮装饰（一次性生成，循环复用）
@@ -143,12 +148,14 @@
     var shareFn = opts.share || function () {};
     var hapticFn = opts.haptic || function () {};
     var soundFn = opts.sound || function () {};
+    var bgmStartFn = opts.bgmStart || function () {};
+    var bgmStopFn = opts.bgmStop || function () {};
     var createCardCanvas = opts.createCardCanvas || function () { return null; };
 
     var state = 'menu'; // menu | countdown | playing | over
     var score = 0, combo = 0, maxCombo = 0;
     var notes = [], floats = [], pops = [];
-    var elapsed = 0, spawnTimer = 0, countdown = 0;
+    var elapsed = 0, spawnTimer = 0, countdown = 0, countInt = 0;
     var lastTime = 0, layout = null, buttons = {};
     var pressed = { lane: -1, t: 0 };
     var laneFlash = [0, 0, 0, 0];
@@ -190,7 +197,7 @@
       shake = 0; lastSpawnLane = -1;
     }
 
-    function startCountdown() { resetGame(); state = 'countdown'; countdown = 3.0; soundFn('start'); }
+    function startCountdown() { resetGame(); state = 'countdown'; countdown = 3.0; countInt = 0; soundFn('start'); bgmStartFn(); }
 
     function startPlaying() { state = 'playing'; lastTime = nowSec(); }
 
@@ -271,6 +278,7 @@
       overAch = getAchievement(score);
       hapticFn('heavy');
       soundFn('fail');
+      bgmStopFn();
       shake = 0.45; shakeMag = 12;
       lastCard = buildShareCard();
     }
@@ -300,7 +308,12 @@
       clock += dt;
       if (state === 'countdown') {
         countdown -= dt;
-        if (countdown <= 0) startPlaying();
+        var ci = Math.ceil(countdown);
+        if (ci !== countInt) {
+          countInt = ci;
+          if (ci > 0) soundFn('tick'); // 3 / 2 / 1 每拍滴答
+        }
+        if (countdown <= 0) { soundFn('go'); startPlaying(); }
       } else if (state === 'playing') {
         elapsed += dt;
         var dur = clamp(2.2 - elapsed * 0.018, 0.92, 2.2);
